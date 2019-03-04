@@ -1,0 +1,28 @@
+{
+  "name": "pomelo2-globalchannel",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aslijia/pomelo2-globalchannel.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Aslijia/pomelo2-globalchannel/issues"
+  },
+  "homepage": "https://github.com/Aslijia/pomelo2-globalchannel#readme",
+  "dependencies": {
+    "pomelo2-logger": "^1.0.1",
+    "redis": "^2.8.0"
+  },
+  "types": "./types/pomelo2-globalChannel.d.ts"
+}
