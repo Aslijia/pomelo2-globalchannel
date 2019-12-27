@@ -104,6 +104,7 @@ class ChannelService {
     manager: ChannelManager;
     state: STATE;
     opts: any;
+    name: string = '__globalChannel__';
     constructor(app: Application, opts: any) {
         this.app = app;
         this.opts = opts;
