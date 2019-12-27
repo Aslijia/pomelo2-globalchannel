@@ -17,8 +17,6 @@ module.exports = function (app: Application, opts: any) {
     return service;
 }
 
-module.exports.name = '__globalChannel__';
-
 class ChannelManager {
     app: Application;
     opts: any;
