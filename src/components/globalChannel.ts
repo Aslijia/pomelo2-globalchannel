@@ -51,7 +51,8 @@ class ChannelManager {
         keys.forEach((k: string) => {
             cmds.push(this.opts.prifix ? k.replace(this.opts.prifix, '') : k);
         });
-        await this.redis?.del(...cmds);
+        if (cmds.length)
+            await this.redis?.del(...cmds);
         logger.warn('global channel was clean', { keys });
     }
 
@@ -64,7 +65,8 @@ class ChannelManager {
                 cmds.push(['del', `${name}${sid}`]);
             }
         }
-        await this.redis?.multi(cmds).exec();
+        if (cmds.length)
+            await this.redis?.multi(cmds).exec();
         logger.debug('the channel destoryed', { name });
     }
 
