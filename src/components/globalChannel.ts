@@ -125,6 +125,8 @@ class ChannelService {
                 this.manager.clean().then(() => {
                     cb && cb();
                 });
+            } else {
+                cb && cb();
             }
         });
     }
