@@ -1,76 +1,87 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const redis_1 = require("@aslijia/redis");
-const pomelo2_logger_1 = require("pomelo2-logger");
-const util_1 = require("util");
-module.exports = function (app, opts) {
+import { RedisClient } from '@aslijia/redis';
+import { getLogger } from 'pomelo2-logger';
+import { promisify } from 'util';
+
+declare interface Application {
+    set(k: string, v: any, bind: boolean): void;
+    getServers(): { [id: string]: object }
+    isFrontend(obj: object): boolean;
+    getServersByType(sType: string): Array<{ id: string }>;
+    rpcInvoke(id: string, opts: any, cb?: Function): string[];
+}
+
+module.exports = function (app: Application, opts: any) {
     const service = new ChannelService(app, opts);
     app.set('globalChannelService', service, true);
     return service;
-};
+}
+
 class ChannelManager {
-    constructor(app, opts) {
+    app: Application;
+    opts: any;
+    redis: RedisClient | undefined;
+    constructor(app: Application, opts: any) {
         this.app = app;
         this.opts = opts;
     }
-    start(cb) {
-        this.redis = new redis_1.RedisClient(this.opts);
+
+    start(cb?: Function) {
+        this.redis = new RedisClient(this.opts);
         this.redis.on('error', (err) => {
-            pomelo2_logger_1.getLogger('globalchannel').error('redis has error', { message: err.message });
+            getLogger('globalchannel').error('redis has error', { message: err.message });
         });
         this.redis.on('ready', () => {
-            if (cb)
-                cb();
+            if (cb) cb();
         });
     }
-    stop(force, cb) {
-        var _a;
-        (_a = this.redis) === null || _a === void 0 ? void 0 : _a.quit();
-        if (cb)
-            cb();
+
+    stop(force: boolean, cb?: Function) {
+        this.redis?.quit();
+        if (cb) cb();
     }
+
     async clean() {
-        var _a, _b;
-        const keys = await ((_a = this.redis) === null || _a === void 0 ? void 0 : _a.keys(`${this.opts.prifix || ''}*`));
-        if (!keys)
-            return;
-        const cmds = [];
-        keys.forEach((k) => {
+        const keys = await this.redis?.keys(`${this.opts.prifix || ''}*`);
+        if (!keys) return;
+
+        const cmds: string[] = [];
+        keys.forEach((k: string) => {
             cmds.push(this.opts.prifix ? k.replace(this.opts.prifix, '') : k);
         });
-        await ((_b = this.redis) === null || _b === void 0 ? void 0 : _b.del(...cmds));
+        await this.redis?.del(...cmds);
     }
-    async destroyChannel(name, cb) {
-        var _a;
+
+    async destroyChannel(name: string, cb?: Function) {
         const servers = this.app.getServers();
-        const cmds = [];
+        const cmds: Array<string[]> = [];
         for (var sid in servers) {
             const server = servers[sid];
             if (this.app.isFrontend(server)) {
                 cmds.push(['del', `${name}${sid}`]);
             }
         }
-        await ((_a = this.redis) === null || _a === void 0 ? void 0 : _a.multi(cmds).exec());
+        await this.redis?.multi(cmds).exec();
     }
-    async add(name, uid, sid) {
-        var _a;
-        return await ((_a = this.redis) === null || _a === void 0 ? void 0 : _a.sadd(`${name}:${sid}`, uid.toString()));
+
+    async add(name: string, uid: number, sid: string) {
+        return await this.redis?.sadd(`${name}:${sid}`, uid.toString());
     }
-    async leave(name, uid, sid) {
-        var _a;
-        return await ((_a = this.redis) === null || _a === void 0 ? void 0 : _a.srem(`${name}:${sid}`, uid.toString()));
+
+    async leave(name: string, uid: number, sid: string) {
+        return await this.redis?.srem(`${name}:${sid}`, uid.toString());
     }
-    async getMembersBySid(name, sid) {
-        var _a;
-        return await ((_a = this.redis) === null || _a === void 0 ? void 0 : _a.smembers(`${name}:${sid}`));
+
+    async getMembersBySid(name: string, sid: string) {
+        return await this.redis?.smembers(`${name}:${sid}`);
     }
 }
-var STATE;
-(function (STATE) {
-    STATE[STATE["ST_INITED"] = 0] = "ST_INITED";
-    STATE[STATE["ST_STARTED"] = 1] = "ST_STARTED";
-    STATE[STATE["ST_CLOSED"] = 2] = "ST_CLOSED";
-})(STATE || (STATE = {}));
+
+enum STATE {
+    ST_INITED = 0,
+    ST_STARTED = 1,
+    ST_CLOSED = 2
+}
+
 /**
  * Global channel service.
  * GlobalChannelService is created by globalChannel component which is a default
@@ -82,19 +93,25 @@ var STATE;
  * @constructor
  */
 class ChannelService {
-    constructor(app, opts) {
+    app: Application;
+    name: string;
+    manager: ChannelManager;
+    state: STATE;
+    opts: any;
+    constructor(app: Application, opts: any) {
         this.app = app;
         this.opts = opts;
         this.name = '__globalChannel__';
+
         if (opts.manager) {
             this.manager = opts.manager;
-        }
-        else {
+        } else {
             this.manager = new ChannelManager(app, opts);
         }
         this.state = STATE.ST_INITED;
     }
-    start(cb) {
+
+    start(cb?: Function) {
         this.manager.start(() => {
             this.state = STATE.ST_STARTED;
             if (this.opts.cleanOnStartUp) {
@@ -104,10 +121,12 @@ class ChannelService {
             }
         });
     }
-    stop(force, cb) {
+
+    stop(force: boolean, cb?: Function) {
         this.state = STATE.ST_CLOSED;
         this.manager.stop(force, cb);
     }
+
     /**
      * Destroy a global channel.
      *
@@ -116,12 +135,13 @@ class ChannelService {
      *
      * @memberOf GlobalChannelService
      */
-    async destroyChannel(name) {
+    async destroyChannel(name: string) {
         if (this.state !== STATE.ST_STARTED) {
             return;
         }
         await this.manager.destroyChannel(name);
     }
+
     /**
      * Add a member into channel.
      *
@@ -132,12 +152,14 @@ class ChannelService {
      *
      * @memberOf GlobalChannelService
      */
-    async add(name, uid, sid) {
+    async add(name: string, uid: number, sid: string) {
         if (this.state !== STATE.ST_STARTED) {
             return;
         }
         await this.manager.add(name, uid, sid);
     }
+
+
     /**
      * Remove user from channel.
      *
@@ -148,12 +170,13 @@ class ChannelService {
      *
      * @memberOf GlobalChannelService
      */
-    async leave(name, uid, sid) {
+    async leave(name: string, uid: number, sid: string) {
         if (this.state !== STATE.ST_STARTED) {
             return;
         }
         await this.manager.leave(name, uid, sid);
     }
+
     /**
      * Get members by frontend server id.
      *
@@ -163,12 +186,13 @@ class ChannelService {
      *
      * @memberOf GlobalChannelService
      */
-    async getMembersBySid(name, sid) {
+    async getMembersBySid(name: string, sid: string) {
         if (this.state !== STATE.ST_STARTED) {
             return [];
         }
         await this.manager.getMembersBySid(name, sid);
     }
+
     /**
      * Get members by channel name.
      *
@@ -178,15 +202,17 @@ class ChannelService {
      *
      * @memberOf GlobalChannelService
      */
-    async getMembersByChannelName(stype, name) {
+    async getMembersByChannelName(stype: string, name: string) {
         if (this.state !== STATE.ST_STARTED) {
             return;
         }
+
         const servers = this.app.getServersByType(stype);
         if (!servers || servers.length === 0) {
             return [];
         }
-        let members = [];
+
+        let members: string[] = [];
         for (let i = 0; i < servers.length; i++) {
             const server = servers[i];
             const m = await this.getMembersBySid(name, server.id);
@@ -196,6 +222,7 @@ class ChannelService {
         }
         return members;
     }
+
     /**
      * Send message by global channel.
      *
@@ -208,22 +235,25 @@ class ChannelService {
      *
      * @memberOf GlobalChannelService
      */
-    async pushMessage(serverType, route, msg, channelName, opts) {
+    async pushMessage(serverType: string, route: string, msg: any, channelName: string, opts: any) {
         if (this.state !== STATE.ST_STARTED) {
             return;
         }
+
         const namespace = 'sys';
         const service = 'channelRemote';
         const method = 'pushMessage';
-        let failIds = [];
+        let failIds: string[] = [];
+
         const servers = this.app.getServersByType(serverType);
         if (!servers || servers.length === 0) {
             // no frontend server infos
             return;
         }
+
         for (let i in servers) {
             const uids = await this.getMembersBySid(channelName, servers[i].id);
-            const fails = await util_1.promisify(this.app.rpcInvoke.bind(this.app))(servers[i].id, {
+            const fails = <string[]>await promisify(this.app.rpcInvoke.bind(this.app))(servers[i].id, {
                 namespace: namespace, service: service, method: method, args: [route, msg, uids, { isPush: true }]
             });
             if (fails)
