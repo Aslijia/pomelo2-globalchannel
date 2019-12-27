@@ -2,6 +2,7 @@ import { RedisClient } from '@aslijia/redis';
 import { getLogger } from 'pomelo2-logger';
 import { promisify } from 'util';
 
+const logger = getLogger('globalchannel');
 declare interface Application {
     set(k: string, v: any, bind: boolean): void;
     getServers(): { [id: string]: object }
@@ -16,6 +17,8 @@ module.exports = function (app: Application, opts: any) {
     return service;
 }
 
+module.exports.name = '__globalChannel__';
+
 class ChannelManager {
     app: Application;
     opts: any;
@@ -23,14 +26,16 @@ class ChannelManager {
     constructor(app: Application, opts: any) {
         this.app = app;
         this.opts = opts;
+        logger.debug('init ChannelManager', { opts });
     }
 
     start(cb?: Function) {
         this.redis = new RedisClient(this.opts);
         this.redis.on('error', (err) => {
-            getLogger('globalchannel').error('redis has error', { message: err.message });
+            logger.error('redis has error', { message: err.message });
         });
         this.redis.on('ready', () => {
+            logger.info('globalchannel init', { opts: this.opts });
             if (cb) cb();
         });
     }
@@ -49,6 +54,7 @@ class ChannelManager {
             cmds.push(this.opts.prifix ? k.replace(this.opts.prifix, '') : k);
         });
         await this.redis?.del(...cmds);
+        logger.warn('global channel was clean', { keys });
     }
 
     async destroyChannel(name: string, cb?: Function) {
@@ -61,6 +67,7 @@ class ChannelManager {
             }
         }
         await this.redis?.multi(cmds).exec();
+        logger.debug('the channel destoryed', { name });
     }
 
     async add(name: string, uid: number, sid: string) {
@@ -94,14 +101,12 @@ enum STATE {
  */
 class ChannelService {
     app: Application;
-    name: string;
     manager: ChannelManager;
     state: STATE;
     opts: any;
     constructor(app: Application, opts: any) {
         this.app = app;
         this.opts = opts;
-        this.name = '__globalChannel__';
 
         if (opts.manager) {
             this.manager = opts.manager;
@@ -109,6 +114,7 @@ class ChannelService {
             this.manager = new ChannelManager(app, opts);
         }
         this.state = STATE.ST_INITED;
+        logger.debug('create ChannelService', {});
     }
 
     start(cb?: Function) {
@@ -137,6 +143,7 @@ class ChannelService {
      */
     async destroyChannel(name: string) {
         if (this.state !== STATE.ST_STARTED) {
+            logger.error('destroy channel failed', { name, state: this.state });
             return;
         }
         await this.manager.destroyChannel(name);
@@ -154,6 +161,7 @@ class ChannelService {
      */
     async add(name: string, uid: number, sid: string) {
         if (this.state !== STATE.ST_STARTED) {
+            logger.error('add member failed', { name, uid, sid, state: this.state });
             return;
         }
         await this.manager.add(name, uid, sid);
@@ -172,6 +180,7 @@ class ChannelService {
      */
     async leave(name: string, uid: number, sid: string) {
         if (this.state !== STATE.ST_STARTED) {
+            logger.error('leave member failed', { name, uid, sid, state: this.state });
             return;
         }
         await this.manager.leave(name, uid, sid);
@@ -188,6 +197,7 @@ class ChannelService {
      */
     async getMembersBySid(name: string, sid: string) {
         if (this.state !== STATE.ST_STARTED) {
+            logger.error('getMembersBySid failed', { name, sid, state: this.state });
             return [];
         }
         await this.manager.getMembersBySid(name, sid);
@@ -204,6 +214,7 @@ class ChannelService {
      */
     async getMembersByChannelName(stype: string, name: string) {
         if (this.state !== STATE.ST_STARTED) {
+            logger.error('getMembersByChannelName failed', { name, stype, state: this.state });
             return;
         }
 
@@ -237,6 +248,7 @@ class ChannelService {
      */
     async pushMessage(serverType: string, route: string, msg: any, channelName: string, opts: any) {
         if (this.state !== STATE.ST_STARTED) {
+            logger.error('pushMessage failed', { name, serverType, route, channelName, opts, state: this.state });
             return;
         }
 
@@ -247,7 +259,7 @@ class ChannelService {
 
         const servers = this.app.getServersByType(serverType);
         if (!servers || servers.length === 0) {
-            // no frontend server infos
+            logger.warn('no frontend server infos', { serverType, servers });
             return;
         }
 
@@ -259,6 +271,7 @@ class ChannelService {
             if (fails)
                 failIds = failIds.concat(fails);
         }
+        logger.debug('global channel pushmessage failIds', { serverType, route, msg, channelName, failIds });
         return failIds;
     }
 }
