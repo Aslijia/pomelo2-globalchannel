@@ -71,15 +71,21 @@ class ChannelManager {
     }
 
     async add(name: string, uid: number, sid: string) {
+        await this.redis?.sadd(uid.toString(), name);
         return await this.redis?.sadd(`${name}:${sid}`, uid.toString());
     }
 
     async leave(name: string, uid: number, sid: string) {
+        await this.redis?.srem(uid.toString(), name);
         return await this.redis?.srem(`${name}:${sid}`, uid.toString());
     }
 
     async getMembersBySid(name: string, sid: string) {
         return await this.redis?.smembers(`${name}:${sid}`);
+    }
+
+    async getChannelsByUid(uid: number) {
+        return await this.redis?.smembers(uid.toString());
     }
 }
 
@@ -235,6 +241,17 @@ class ChannelService {
             }
         }
         return members;
+    }
+
+    /**
+     * get joined channel list
+     */
+    async getChannelsByMember(uid: number) {
+        if (this.state !== STATE.ST_STARTED) {
+            logger.error('getMembersByChannelName failed', { uid, state: this.state });
+            return;
+        }
+        return await this.manager.getChannelsByUid(uid);
     }
 
     /**
