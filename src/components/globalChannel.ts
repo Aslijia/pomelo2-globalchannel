@@ -17,6 +17,8 @@ module.exports = function (app: Application, opts: any) {
     return service;
 }
 
+const DEFALT_PREFIX = '{POMELO-GLOBALCHANNEL}'
+
 class ChannelManager {
     app: Application;
     opts: any;
@@ -24,6 +26,10 @@ class ChannelManager {
     constructor(app: Application, opts: any) {
         this.app = app;
         this.opts = opts;
+        if (!this.opts.prefix) {
+            this.opts.prefix = DEFALT_PREFIX;
+        }
+
         logger.debug('init ChannelManager', { opts });
     }
 
@@ -44,15 +50,16 @@ class ChannelManager {
     }
 
     async clean() {
-        const keys = await this.redis?.keys(`${this.opts.prifix || ''}*`);
+        const keys = await this.redis?.keys(`${this.opts.prefix}*`);
         if (!keys) return;
 
         const cmds: string[] = [];
         keys.forEach((k: string) => {
-            cmds.push(this.opts.prifix ? k.replace(this.opts.prifix, '') : k);
+            cmds.push(this.opts.prefix ? k.replace(this.opts.prefix, '') : k);
         });
         if (cmds.length)
             await this.redis?.del(...cmds);
+
         logger.warn('global channel was clean', { keys });
     }
 
