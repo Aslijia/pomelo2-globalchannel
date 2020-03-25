@@ -292,11 +292,13 @@ class ChannelService {
 
         for (let i in servers) {
             const uids = await this.getMembersBySid(channelName, servers[i].id);
-            const fails = <string[]>await promisify(this.app.rpcInvoke.bind(this.app))(servers[i].id, {
-                namespace: namespace, service: service, method: method, args: [route, msg, uids, { isPush: true }]
-            });
-            if (fails)
-                failIds = failIds.concat(fails);
+            if (uids && uids.length) {
+                const fails = <string[]>await promisify(this.app.rpcInvoke.bind(this.app))(servers[i].id, {
+                    namespace: namespace, service: service, method: method, args: [route, msg, uids, { isPush: true }]
+                });
+                if (fails)
+                    failIds = failIds.concat(fails);
+            }
         }
         logger.debug('global channel pushmessage failIds', { serverType, route, msg, channelName, failIds });
         return failIds;
