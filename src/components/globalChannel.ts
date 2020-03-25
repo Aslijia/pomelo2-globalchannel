@@ -216,7 +216,7 @@ class ChannelService {
             logger.error('getMembersBySid failed', { name, sid, state: this.state });
             return [];
         }
-        await this.manager.getMembersBySid(name, sid);
+        return await this.manager.getMembersBySid(name, sid);
     }
 
     /**
