@@ -289,10 +289,11 @@ class ChannelService {
             logger.warn('no frontend server infos', { serverType, servers });
             return;
         }
-
+        let users: string[] = [];
         for (let i in servers) {
             const uids = await this.getMembersBySid(channelName, servers[i].id);
             if (uids && uids.length) {
+                users = users.concat(uids);
                 const fails = <string[]>await promisify(this.app.rpcInvoke.bind(this.app))(servers[i].id, {
                     namespace: namespace, service: service, method: method, args: [route, msg, uids, { isPush: true }]
                 });
@@ -300,7 +301,7 @@ class ChannelService {
                     failIds = failIds.concat(fails);
             }
         }
-        logger.debug('global channel pushmessage failIds', { serverType, route, msg, channelName, failIds });
+        logger.debug('global channel pushmessage failIds', { serverType, route, msg, channelName, failIds, users });
         return failIds;
     }
 }
