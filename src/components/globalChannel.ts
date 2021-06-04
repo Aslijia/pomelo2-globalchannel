@@ -1,4 +1,4 @@
-import RedisClient from 'ioredis'
+import IORedis from 'ioredis'
 import { getLogger } from 'pomelo2-logger'
 import { promisify } from 'util'
 
@@ -23,49 +23,68 @@ const DEFALT_PREFIX = '{POMELO-GLOBALCHANNEL}'
 class ChannelManager {
 	app: Application
 	opts: any
-	redis: RedisClient.Redis | undefined
+	redis: IORedis.Redis | undefined
 	constructor(app: Application, opts: any) {
 		this.app = app
 		this.opts = opts
 		if (!this.opts.options) {
-			this.opts.options = {}
+			this.opts.options = {
+				keyPrefix: DEFALT_PREFIX,
+			}
 		}
-		if (!this.opts.options.prefix) {
-			this.opts.options.prefix = DEFALT_PREFIX
-		}
-		logger.debug('init ChannelManager', { opts })
+		logger.trace('constructor', { opts })
 	}
 
 	start(cb?: Function) {
-		this.redis = new RedisClient(this.opts.url, this.opts.options)
+		this.redis = new IORedis(this.opts.url, this.opts.options)
+
 		this.redis.on('error', (err) => {
 			logger.error('redis has error', { message: err.message })
 		})
+
 		this.redis.on('ready', () => {
-			logger.info('globalchannel init', { opts: this.opts })
+			logger.trace('redis ready', { opts: this.opts })
 			if (cb) cb()
 		})
 	}
 
 	stop(force: boolean, cb?: Function) {
-		this.redis?.quit()
+		if (!this.redis) {
+			logger.error('clean', { force })
+			return cb && cb()
+		}
+		this.redis.quit()
 		if (cb) cb()
 	}
 
 	async clean() {
-		const keys = await this.redis?.keys(`${this.opts.prefix}*`)
+		if (!this.redis) {
+			logger.error('clean', {})
+			return
+		}
+
+		const keys = await this.redis.keys(`${this.opts.options.keyPrefix}*`)
 		if (!keys) return
 
 		const cmds: string[] = []
 		keys.forEach((k: string) => {
-			cmds.push(this.opts.prefix ? k.replace(this.opts.prefix, '') : k)
+			cmds.push(
+				this.opts.options.keyPrefix
+					? k.replace(this.opts.options.keyPrefix, '')
+					: k
+			)
 		})
-		if (cmds.length) await this.redis?.del(...cmds)
+		if (cmds.length) await this.redis.del(...cmds)
 
 		logger.warn('global channel was clean', { keys })
 	}
 
 	async destroyChannel(name: string, cb?: Function) {
+		if (!this.redis) {
+			logger.error('destroyChannel', {})
+			return cb && cb()
+		}
+
 		const servers = this.app.getServers()
 		const cmds: Array<string[]> = []
 		for (var sid in servers) {
@@ -74,28 +93,43 @@ class ChannelManager {
 				cmds.push(['del', `${name}${sid}`])
 			}
 		}
-		if (cmds.length) await this.redis?.multi(cmds).exec()
+		if (cmds.length) await this.redis.multi(cmds).exec()
 		logger.debug('the channel destoryed', { name })
 	}
 
 	async add(name: string, uid: number, sid: string) {
-		await this.redis?.sadd(uid.toString(), JSON.stringify({ name, sid }))
-		return await this.redis?.sadd(`${name}:${sid}`, uid.toString())
+		if (!this.redis) {
+			return
+		}
+		logger.trace('add', { name, uid, sid })
+		await this.redis.sadd(`user.${uid}.sids`, JSON.stringify({ name, sid }))
+		await this.redis.sadd(`${name}:${sid}`, uid.toString())
 	}
 
 	async leave(name: string, uid: number, sid: string) {
-		await this.redis?.srem(uid.toString(), JSON.stringify({ name, sid }))
-		return await this.redis?.srem(`${name}:${sid}`, uid.toString())
+		if (!this.redis) {
+			return
+		}
+		logger.trace('leave', { name, uid, sid })
+		await this.redis.srem(`user.${uid}.sids`, JSON.stringify({ name, sid }))
+		await this.redis.srem(`${name}:${sid}`, uid.toString())
 	}
 
 	async getMembersBySid(name: string, sid: string) {
-		return await this.redis?.smembers(`${name}:${sid}`)
+		if (!this.redis) {
+			return
+		}
+		logger.trace('getMembersBySid', { name, sid })
+		return await this.redis.smembers(`${name}:${sid}`)
 	}
 
-	async getChannelsByUid(
-		uid: number
-	): Promise<{ name: string; sid: string }[]> {
-		const channels: any = await this.redis?.smembers(uid.toString())
+	async getChannelsByUid(uid: number) {
+		logger.trace('getChannelsByUid', { uid })
+		if (!this.redis) {
+			return []
+		}
+
+		const channels = await this.redis.smembers(`user.${uid}.sids`)
 		if (!channels) {
 			return []
 		}
@@ -105,6 +139,7 @@ class ChannelManager {
 				channels[i] = JSON.parse(channels[i])
 			} catch (_) {}
 		}
+		logger.debug('getChannelsByUid', { uid, channels })
 		return channels
 	}
 }
@@ -283,9 +318,7 @@ class ChannelService {
 	/**
 	 * get joined channel list
 	 */
-	async getChannelsByMember(
-		uid: number
-	): Promise<{ name: string; sid: string }[]> {
+	async getChannelsByMember(uid: number) {
 		if (this.state !== STATE.ST_STARTED) {
 			logger.error('getMembersByChannelName failed', {
 				uid,
