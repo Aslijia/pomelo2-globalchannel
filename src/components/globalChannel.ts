@@ -27,16 +27,17 @@ class ChannelManager {
 	constructor(app: Application, opts: any) {
 		this.app = app
 		this.opts = opts
-
-		if (!this.opts.prefix) {
-			this.opts.prefix = DEFALT_PREFIX
+		if (!this.opts.options) {
+			this.opts.options = {}
 		}
-
+		if (!this.opts.options.prefix) {
+			this.opts.options.prefix = DEFALT_PREFIX
+		}
 		logger.debug('init ChannelManager', { opts })
 	}
 
 	start(cb?: Function) {
-		this.redis = new RedisClient(this.opts)
+		this.redis = new RedisClient(this.opts.url, this.opts.options)
 		this.redis.on('error', (err) => {
 			logger.error('redis has error', { message: err.message })
 		})
