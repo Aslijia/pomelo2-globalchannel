@@ -104,6 +104,7 @@ class ChannelManager {
 		logger.trace('add', { name, uid, sid })
 		await this.redis.sadd(`user.${uid}.sids`, JSON.stringify({ name, sid }))
 		await this.redis.sadd(`${name}:${sid}`, uid.toString())
+		await this.redis.hset(name, uid.toString(), sid)
 	}
 
 	async leave(name: string, uid: number, sid: string) {
@@ -113,6 +114,21 @@ class ChannelManager {
 		logger.trace('leave', { name, uid, sid })
 		await this.redis.srem(`user.${uid}.sids`, JSON.stringify({ name, sid }))
 		await this.redis.srem(`${name}:${sid}`, uid.toString())
+		await this.redis.hdel(name, uid.toString())
+	}
+
+	async members(name: string) {
+		if (!this.redis) {
+			return
+		}
+		return (await this.redis.hkeys(name)) || []
+	}
+
+	async ismember(name: string, uid: number) {
+		if (!this.redis) {
+			return
+		}
+		return await this.redis.hexists(name, uid.toString())
 	}
 
 	async getMembersBySid(name: string, sid: string) {
@@ -278,6 +294,29 @@ class ChannelService {
 			return []
 		}
 		return await this.manager.getMembersBySid(name, sid)
+	}
+
+	async getMembersByChannel(name: string) {
+		if (this.state !== STATE.ST_STARTED) {
+			logger.error('leave member failed', {
+				name,
+				state: this.state,
+			})
+			return []
+		}
+		return (await this.manager.members(name)) || []
+	}
+
+	async isMemberInChannel(name: string, uid: number) {
+		if (this.state !== STATE.ST_STARTED) {
+			logger.error('leave member failed', {
+				name,
+				uid,
+				state: this.state,
+			})
+			return false
+		}
+		return (await this.manager.ismember(name, uid)) || false
 	}
 
 	/**
