@@ -1,18 +1,24 @@
 import IORedis from 'ioredis'
 import { getLogger } from 'pomelo2-logger'
-import { promisify } from 'util'
 
 const logger = getLogger('globalchannel')
 
 declare interface Application {
     set(k: string, v: any, bind: boolean): void
-    getServers(): { [id: string]: object }
-    isFrontend(obj: object): boolean
     getServersByType(sType: string): Array<{ id: string }>
     rpcInvoke(id: string, opts: any, cb?: Function): string[]
 }
 
-module.exports = function (app: Application, opts: any) {
+declare interface Options {
+    url: string
+    options?: {
+        keyPrefix: string
+        scaleReads?: string
+    }
+    cleanOnStartUp?: boolean
+}
+
+module.exports = function (app: Application, opts: Options) {
     const service = new ChannelService(app, opts)
     app.set('globalChannelService', service, true)
     return service
@@ -22,9 +28,9 @@ const DEFALT_PREFIX = '{POMELO-GLOBALCHANNEL}'
 
 class ChannelManager {
     app: Application
-    opts: any
+    opts: Options
     redis: IORedis.Redis | undefined
-    constructor(app: Application, opts: any) {
+    constructor(app: Application, opts: Options) {
         this.app = app
         this.opts = opts
         if (!this.opts.options) {
@@ -32,7 +38,6 @@ class ChannelManager {
                 keyPrefix: DEFALT_PREFIX
             }
         }
-        logger.trace('constructor', { opts })
     }
 
     start(cb?: Function) {
@@ -51,125 +56,108 @@ class ChannelManager {
     stop(force: boolean, cb?: Function) {
         if (!this.redis) {
             logger.error('clean', { force })
-            return cb && cb()
+            return cb && typeof cb === 'function' && cb()
         }
-        this.redis.quit()
-        if (cb) cb()
+        this.redis
+            .quit()
+            .then(() => {
+                if (cb && typeof cb === 'function') cb()
+            })
+            .catch((err) => {
+                if (cb && typeof cb === 'function') cb(err)
+            })
     }
 
-    async clean() {
+    async cleanup() {
         if (!this.redis) {
             logger.error('clean', {})
             return
         }
-
-        const keys = await this.redis.keys(`${this.opts.options.keyPrefix}*`)
-        if (!keys) return
-
-        const cmds: string[] = []
-        keys.forEach((k: string) => {
-            cmds.push(this.opts.options.keyPrefix ? k.replace(this.opts.options.keyPrefix, '') : k)
-        })
-        if (cmds.length) await this.redis.del(...cmds)
-
-        logger.warn('global channel was clean', { keys })
-    }
-
-    async destroyChannel(name: string, cb?: Function) {
-        if (!this.redis) {
-            logger.error('destroyChannel', {})
-            return cb && cb()
-        }
-
-        const servers = this.app.getServers()
-        const cmds: Array<string[]> = []
-        for (var sid in servers) {
-            const server = servers[sid]
-            if (this.app.isFrontend(server)) {
-                cmds.push(['del', `${name}${sid}`])
-            }
-        }
-        if (cmds.length) await this.redis.multi(cmds).exec()
-        logger.debug('the channel destoryed', { name })
-    }
-
-    async add(name: string, uid: number, sid: string) {
-        if (!this.redis) {
-            return
-        }
-        logger.trace('add', { name, uid, sid })
-        await this.redis.sadd(`user.${uid}.sids`, JSON.stringify({ name, sid }))
-        await this.redis.sadd(`${name}:${sid}`, uid.toString())
-        await this.redis.hset(name, uid.toString(), sid)
-    }
-
-    async leave(name: string, uid: number, sid?: string) {
-        if (!this.redis) {
-            return
-        }
-        if (!sid) {
-            const members = await this.redis.smembers(`user.${uid}.sids`)
-            for (let i in members) {
-                try {
-                    const member = typeof members[i] === 'string' ? JSON.parse(members[i]) : members[i]
-                    if (member && member.name === name) {
-                        logger.trace('leave', { name, uid, member })
-                        await this.redis.srem(`user.${uid}.sids`, JSON.stringify(member))
-                        await this.redis.srem(`${name}:${member.sid}`, uid.toString())
-                        await this.redis.hdel(name, uid.toString())
-                    }
-                } catch (err: any) {
-                    logger.error('parse channel failed', {})
+        let cleaned: string[] = []
+        let cursor = '0'
+        const keyPrefix = this.opts.options ? this.opts.options.keyPrefix : ''
+        do {
+            const batch = await this.redis.scan(cursor, 'MATCH', `${keyPrefix}*`, 'COUNT', 100)
+            const elements = batch[1]
+            if (elements && elements.length) {
+                const keys = elements.filter((k) => k && k.replace(keyPrefix, ''))
+                if (keys && keys.length) {
+                    this.redis.del(...keys)
+                    cleaned = cleaned.concat(keys)
                 }
             }
-        } else {
-            logger.trace('leave', { name, uid, sid })
-            await this.redis.srem(`user.${uid}.sids`, JSON.stringify({ name, sid }))
-            await this.redis.srem(`${name}:${sid}`, uid.toString())
-            await this.redis.hdel(name, uid.toString())
+            cursor = batch[0]
+        } while (cursor != '0')
+        logger.warn('global channel was clean', { keys: cleaned })
+    }
+
+    async destroy(channel: string, cb?: Function) {
+        if (!this.redis) {
+            logger.error('destroyChannel', {})
+            return cb && typeof cb === 'function' && cb()
+        }
+
+        const members = await this.members(channel)
+        if (members) {
+            members.forEach((uid) => this.leave(channel, uid))
         }
     }
 
-    async members(name: string) {
+    async len(channel: string) {
+        if (!this.redis) {
+            logger.error('reids service invalid', { channel })
+            return
+        }
+        return await this.redis.hlen(`c#${channel}`)
+    }
+
+    async add(name: string, uid: number | string, sid: string) {
+        if (!this.redis) {
+            logger.error('reids service invalid', { name, uid })
+            return
+        }
+        const o = await this.redis.hget(`u#${uid}`, name)
+        if (o) await this.redis.srem(`s#${name}:${sid}`, uid)
+
+        await this.redis.hset(`u#${uid}`, name, sid)
+        await this.redis.sadd(`s#${name}:${sid}`, uid.toString())
+        await this.redis.hset(`c#${name}`, uid.toString(), sid)
+        console.log('add one:', name, uid, sid)
+    }
+
+    async leave(channel: string, uid: number | string, sid?: string | null) {
         if (!this.redis) {
             return
         }
-        return (await this.redis.hkeys(name)) || []
+        sid = sid || (await this.redis.hget(`u#${uid}`, channel))
+        this.redis.hdel(`u#${uid}`, channel)
+        this.redis.hdel(`c#${channel}`, uid as string)
+        if (sid) this.redis.srem(`s#${channel}:${sid}`, uid)
     }
 
-    async ismember(name: string, uid: number) {
+    async members(channel: string, serverId?: string) {
         if (!this.redis) {
             return
         }
-        return await this.redis.hexists(name, uid.toString())
+        if (serverId) {
+            return await this.redis.smembers(`s#${channel}:${serverId}`)
+        }
+        return (await this.redis.hkeys(`c#${channel}`)) || []
     }
 
-    async getMembersBySid(name: string, sid: string) {
+    async ismember(channel: string, uid: number | string) {
         if (!this.redis) {
             return
         }
-        logger.trace('getMembersBySid', { name, sid })
-        return await this.redis.smembers(`${name}:${sid}`)
+        return await this.redis.hexists(`c#${channel}`, uid as string)
     }
 
-    async getChannelsByUid(uid: number) {
+    async channels(uid: number | string) {
         logger.trace('getChannelsByUid', { uid })
         if (!this.redis) {
             return []
         }
-
-        const channels = await this.redis.smembers(`user.${uid}.sids`)
-        if (!channels) {
-            return []
-        }
-
-        for (let i in channels) {
-            try {
-                channels[i] = JSON.parse(channels[i])
-            } catch (_) {}
-        }
-        logger.debug('getChannelsByUid', { uid, channels })
-        return channels
+        return await this.redis.hkeys(`u#${uid}`)
     }
 }
 
@@ -212,11 +200,11 @@ class ChannelService {
         this.manager.start(() => {
             this.state = STATE.ST_STARTED
             if (this.opts.cleanOnStartUp) {
-                this.manager.clean().then(() => {
-                    cb && cb()
+                this.manager.cleanup().then(() => {
+                    cb && typeof cb === 'function' && cb()
                 })
             } else {
-                cb && cb()
+                cb && typeof cb === 'function' && cb()
             }
         })
     }
@@ -226,226 +214,91 @@ class ChannelService {
         this.manager.stop(force, cb)
     }
 
-    /**
-     * Destroy a global channel.
-     *
-     * @param  {String}   name global channel name
-     * @param  {Function} cb callback function
-     *
-     * @memberOf GlobalChannelService
-     */
-    async destroyChannel(name: string) {
+    async destroy(name: string) {
         if (this.state !== STATE.ST_STARTED) {
             logger.error('destroy channel failed', { name, state: this.state })
             return
         }
-        await this.manager.destroyChannel(name)
+        await this.manager.destroy(name)
     }
 
-    /**
-     * Add a member into channel.
-     *
-     * @param  {String}   name channel name
-     * @param  {String}   uid  user id
-     * @param  {String}   sid  frontend server id
-     * @param  {Function} cb   callback function
-     *
-     * @memberOf GlobalChannelService
-     */
-    async add(name: string, uid: number, sid: string) {
+    async len(channel: string) {
         if (this.state !== STATE.ST_STARTED) {
-            logger.error('add member failed', {
-                name,
-                uid,
-                sid,
-                state: this.state
-            })
+            logger.error('get channel len failed', { channel, state: this.state })
             return
         }
-        await this.manager.add(name, uid, sid)
+        return await this.manager.len(channel)
     }
 
-    /**
-     * Remove user from channel.
-     *
-     * @param  {String}   name channel name
-     * @param  {String}   uid  user id
-     * @param  {String}   sid  frontend server id
-     * @param  {Function} cb   callback function
-     *
-     * @memberOf GlobalChannelService
-     */
-    async leave(name: string, uid: number, sid?: string) {
+    async add(channel: string, uid: number, serverId: string) {
         if (this.state !== STATE.ST_STARTED) {
-            logger.error('leave member failed', {
-                name,
-                uid,
-                sid,
-                state: this.state
-            })
+            logger.error('add member failed', { channel, uid, serverId, state: this.state })
             return
         }
-        await this.manager.leave(name, uid, sid)
+        await this.manager.add(channel, uid, serverId)
     }
 
-    /**
-     * Get members by frontend server id.
-     *
-     * @param  {String}   name channel name
-     * @param  {String}   sid  frontend server id
-     * @param  {Function} cb   callback function
-     *
-     * @memberOf GlobalChannelService
-     */
-    async getMembersBySid(name: string, sid: string) {
+    async leave(channel: string, uid: number, sid?: string) {
         if (this.state !== STATE.ST_STARTED) {
-            logger.error('getMembersBySid failed', {
-                name,
-                sid,
-                state: this.state
-            })
-            return []
-        }
-        return await this.manager.getMembersBySid(name, sid)
-    }
-
-    async getMembersByChannel(name: string) {
-        if (this.state !== STATE.ST_STARTED) {
-            logger.error('leave member failed', {
-                name,
-                state: this.state
-            })
-            return []
-        }
-        return (await this.manager.members(name)) || []
-    }
-
-    async isMemberInChannel(name: string, uid: number) {
-        if (this.state !== STATE.ST_STARTED) {
-            logger.error('leave member failed', {
-                name,
-                uid,
-                state: this.state
-            })
-            return false
-        }
-        return (await this.manager.ismember(name, uid)) || false
-    }
-
-    /**
-     * Get members by channel name.
-     *
-     * @param  {String}   stype frontend server type string
-     * @param  {String}   name channel name
-     * @param  {Function} cb   callback function
-     *
-     * @memberOf GlobalChannelService
-     */
-    async getMembersByChannelName(stype: string, name: string) {
-        if (this.state !== STATE.ST_STARTED) {
-            logger.error('getMembersByChannelName failed', {
-                name,
-                stype,
-                state: this.state
-            })
+            logger.error('leave member failed', { channel, uid, sid, state: this.state })
             return
         }
-
-        const servers = this.app.getServersByType(stype)
-        if (!servers || servers.length === 0) {
-            return []
-        }
-
-        let members: string[] = []
-        for (let i = 0; i < servers.length; i++) {
-            const server = servers[i]
-            const m = await this.getMembersBySid(name, server.id)
-            if (m && m.length) {
-                members = members.concat(m)
-            }
-        }
-        return members
+        await this.manager.leave(channel, uid, sid)
     }
 
-    /**
-     * get joined channel list
-     */
-    async getChannelsByMember(uid: number) {
+    async members(channel: string, serverId?: string) {
         if (this.state !== STATE.ST_STARTED) {
-            logger.error('getMembersByChannelName failed', {
-                uid,
-                state: this.state
-            })
-            return []
+            logger.error('get members failed', { channel, state: this.state })
+            return
         }
-        return await this.manager.getChannelsByUid(uid)
+        return await this.manager.members(channel, serverId)
     }
 
-    /**
-     * Send message by global channel.
-     *
-     * @param  {String}   serverType  frontend server type
-     * @param  {String}   route       route string
-     * @param  {Object}   msg         message would be sent to clients
-     * @param  {String}   channelName channel name
-     * @param  {Object}   opts        reserved
-     * @param  {Function} cb          callback function
-     *
-     * @memberOf GlobalChannelService
-     */
+    async ismember(channel: string, uid: string | number) {
+        if (this.state !== STATE.ST_STARTED) {
+            logger.error('get ismember failed', { channel, state: this.state })
+            return
+        }
+        return await this.manager.ismember(channel, uid)
+    }
+
+    async channels(uid: string | number) {
+        if (this.state !== STATE.ST_STARTED) {
+            logger.error('get channels failed', { uid, state: this.state })
+            return
+        }
+        return await this.manager.channels(uid)
+    }
+
     async pushMessage(serverType: string, route: string, msg: any, channelName: string, opts: any) {
         if (this.state !== STATE.ST_STARTED) {
-            logger.error('pushMessage failed', {
-                name,
-                serverType,
-                route,
-                channelName,
-                opts,
-                state: this.state
-            })
+            logger.error('pushMessage failed', { serverType, route, channelName, opts, state: this.state })
             return
         }
 
         const namespace = 'sys'
         const service = 'channelRemote'
         const method = 'pushMessage'
-        let failIds: string[] = []
-
         const servers = this.app.getServersByType(serverType)
         if (!servers || servers.length === 0) {
             logger.warn('no frontend server infos', { serverType, servers })
             return
         }
-
         let users: string[] = []
         for (let i in servers) {
-            const uids = await this.getMembersBySid(channelName, servers[i].id)
+            const uids = await this.members(channelName, servers[i].id)
             if (uids && uids.length) {
                 users = users.concat(uids)
-
                 const params = {
                     namespace: namespace,
                     service: service,
                     method: method,
                     args: [route, msg, uids, { isPush: true }]
                 }
-
-                const fails = <string[]>await promisify(this.app.rpcInvoke.bind(this.app))(
-                    servers[i].id,
-                    //@ts-ignore
-                    params
-                )
-                if (fails) failIds = failIds.concat(fails)
+                this.app.rpcInvoke(servers[i].id, params, () => {})
             }
         }
-        logger.debug('global channel pushmessage failIds', {
-            serverType,
-            route,
-            msg,
-            channelName,
-            failIds,
-            users
-        })
-        return failIds
+        logger.debug('global channel pushmessage', { serverType, route, msg, channelName, users })
+        return users
     }
 }

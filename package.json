@@ -1,31 +1,36 @@
 {
-  "name": "pomelo2-globalchannel",
-  "version": "1.4.1",
-  "description": "",
-  "main": "./lib/index.js",
-  "files": [
-    "lib"
-  ],
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Aslijia/pomelo2-globalchannel.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/Aslijia/pomelo2-globalchannel/issues"
-  },
-  "homepage": "https://github.com/Aslijia/pomelo2-globalchannel#readme",
-  "dependencies": {
-    "ioredis": "^4.27.4",
-    "pomelo2-logger": "^1.0.1"
-  },
-  "devDependencies": {
-    "@types/ioredis": "^4.26.4",
-    "@types/node": "^13.9.1"
-  }
+    "name": "pomelo2-globalchannel",
+    "version": "2.0.1",
+    "description": "",
+    "main": "./lib/index.js",
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "test": "jest --verbose ./lib",
+        "build": "tsc -p tsconfig.json"
+    },
+    "types": "./typings/globalchannel.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Aslijia/pomelo2-globalchannel.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "bugs": {
+        "url": "https://github.com/Aslijia/pomelo2-globalchannel/issues"
+    },
+    "homepage": "https://github.com/Aslijia/pomelo2-globalchannel#readme",
+    "dependencies": {
+        "ioredis": "^4.27.4",
+        "pomelo2-logger": "^1.0.1"
+    },
+    "devDependencies": {
+        "@jest/globals": "^29.5.0",
+        "@types/ioredis": "^4.26.4",
+        "@types/jest": "^29.5.0",
+        "@types/node": "^16.18.22",
+        "jest": "^29.5.0"
+    }
 }
