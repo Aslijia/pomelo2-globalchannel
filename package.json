@@ -1,10 +1,11 @@
 {
     "name": "pomelo2-globalchannel",
-    "version": "2.0.1",
+    "version": "2.0.3",
     "description": "",
     "main": "./lib/index.js",
     "files": [
-        "lib"
+        "lib",
+        "typings"
     ],
     "scripts": {
         "test": "jest --verbose ./lib",

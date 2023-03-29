@@ -33,7 +33,7 @@ describe('unit test:', () => {
         }
     }
 
-    const services: globalChannelService = creater(app, {
+    const services = creater(app, {
         url: 'redis://127.0.0.1:6379',
         cleanOnStartUp: true,
         options: {

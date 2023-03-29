@@ -12,6 +12,8 @@ declare interface globalChannelService {
     members(channel: string): Promise<(string | number)[]>
     members(channel: string, serverId: string): Promise<(string | number)[]>
     add(channel: string, uid: string | number, serverId: string): Promise<void>
-    leave(channel: string, uid: string | number): Promise<void>
+    leave(channel: string, uid: string | number, serverId?: string): Promise<void>
     pushMessage(serverType: string, route: string, msg: any, channel: string, opts: any): Promise<number | void>
 }
+
+export const components: string
