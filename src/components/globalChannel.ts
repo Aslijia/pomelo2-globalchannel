@@ -122,7 +122,6 @@ class ChannelManager {
         await this.redis.hset(`u#${uid}`, name, sid)
         await this.redis.sadd(`s#${name}:${sid}`, uid.toString())
         await this.redis.hset(`c#${name}`, uid.toString(), sid)
-        console.log('add one:', name, uid, sid)
     }
 
     async leave(channel: string, uid: number | string, sid?: string | null) {
