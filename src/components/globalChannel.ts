@@ -117,7 +117,7 @@ class ChannelManager {
             return
         }
         const o = await this.redis.hget(`u#${uid}`, name)
-        if (o) await this.redis.srem(`s#${name}:${sid}`, uid)
+        if (o) await this.redis.srem(`s#${name}:${o}`, uid)
 
         await this.redis.hset(`u#${uid}`, name, sid)
         await this.redis.sadd(`s#${name}:${sid}`, uid.toString())
